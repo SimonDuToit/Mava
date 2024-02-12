@@ -130,7 +130,7 @@ class ConnectorWrapper(MultiAgentWrapper):
     def modify_timestep(self, timestep: TimeStep) -> TimeStep[Observation]:
         """Modify the timestep for the Robotic Warehouse environment."""
         observation = Observation(
-            grid=timestep.observation.grid,
+            agents_view=timestep.observation.grid,
             action_mask=timestep.observation.action_mask,
             step_count=jnp.repeat(timestep.observation.step_count, self._num_agents),
         ) 
