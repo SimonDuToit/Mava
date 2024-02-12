@@ -23,7 +23,7 @@ from jumanji.environments.routing.robot_warehouse import RobotWarehouse
 from jumanji.types import TimeStep
 from jumanji.wrappers import Wrapper
 
-from mava.types import Observation, State
+from mava.types import Observation, State, ObservationGlobalState
 
 
 class MultiAgentWrapper(Wrapper):
@@ -129,7 +129,8 @@ class ConnectorWrapper(MultiAgentWrapper):
 
     def modify_timestep(self, timestep: TimeStep) -> TimeStep[Observation]:
         """Modify the timestep for the Robotic Warehouse environment."""
-        observation = Observation(
+        observation = ObservationGlobalState(
+            global_state=jnp.tile(timestep.observation.grid[0], (self._num_agents, 1, 1)),
             agents_view=timestep.observation.grid,
             action_mask=timestep.observation.action_mask,
             step_count=jnp.repeat(timestep.observation.step_count, self._num_agents),
@@ -145,11 +146,13 @@ class ConnectorWrapper(MultiAgentWrapper):
             [self.time_limit] * self._num_agents,
             "step_count",
         )
+
         spec = specs.Spec(
-            Observation,
+            ObservationGlobalState,
             "ObservationSpec",
             agents_view=self._env.observation_spec().grid,
             action_mask=self._env.observation_spec().action_mask,
+            global_state=self._env.observation_spec().grid,
             step_count=step_count,
         )
         return spec
