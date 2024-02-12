@@ -117,3 +117,20 @@ class LbfWrapper(MultiAgentWrapper):
 
         # Aggregate the list of individual rewards and use a single team_reward.
         return self.aggregate_rewards(timestep, modified_observation)
+    
+
+class ConnectorWrapper(MultiAgentWrapper):
+    """Multi-agent wrapper for the Robotic Warehouse environment."""
+
+    def __init__(self, env: RobotWarehouse):
+        super().__init__(env)
+
+    def modify_timestep(self, timestep: TimeStep) -> TimeStep[Observation]:
+        """Modify the timestep for the Robotic Warehouse environment."""
+        observation = Observation(
+            grid=timestep.observation.grid,
+            action_mask=timestep.observation.action_mask,
+            step_count=jnp.repeat(timestep.observation.step_count, self._num_agents),
+        ) 
+        return timestep.replace(observation=observation)
+
