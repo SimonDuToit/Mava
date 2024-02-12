@@ -135,4 +135,22 @@ class ConnectorWrapper(MultiAgentWrapper):
             step_count=jnp.repeat(timestep.observation.step_count, self._num_agents),
         ) 
         return timestep.replace(observation=observation)
+    
+    def observation_spec(self) -> specs.Spec[Observation]:
+        """Specification of the observation of the environment."""
+        step_count = specs.BoundedArray(
+            (self._num_agents,),
+            jnp.int32,
+            [0] * self._num_agents,
+            [self.time_limit] * self._num_agents,
+            "step_count",
+        )
+        spec = specs.Spec(
+            Observation,
+            "ObservationSpec",
+            agents_view=self._env.observation_spec().grid,
+            action_mask=self._env.observation_spec().action_mask,
+            step_count=step_count,
+        )
+        return spec
 
