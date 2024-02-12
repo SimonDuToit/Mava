@@ -18,7 +18,7 @@ import chex
 import jax.numpy as jnp
 from jumanji import specs
 from jumanji.env import Environment
-from jumanji.environments.routing.lbf import LevelBasedForaging
+#from jumanji.environments.routing.lbf import LevelBasedForaging
 from jumanji.environments.routing.robot_warehouse import RobotWarehouse
 from jumanji.types import TimeStep
 from jumanji.wrappers import Wrapper
@@ -76,6 +76,7 @@ class RwareWrapper(MultiAgentWrapper):
         return timestep.replace(observation=observation, reward=reward, discount=discount)
 
 
+'''
 class LbfWrapper(MultiAgentWrapper):
     """
      Multi-agent wrapper for the Level-Based Foraging environment.
@@ -117,7 +118,8 @@ class LbfWrapper(MultiAgentWrapper):
 
         # Aggregate the list of individual rewards and use a single team_reward.
         return self.aggregate_rewards(timestep, modified_observation)
-    
+    '''
+
 
 class ConnectorWrapper(MultiAgentWrapper):
     """Multi-agent wrapper for the Robotic Warehouse environment."""
