@@ -20,6 +20,8 @@ from jumanji import specs
 from jumanji.env import Environment
 #from jumanji.environments.routing.lbf import LevelBasedForaging
 from jumanji.environments.routing.robot_warehouse import RobotWarehouse
+from jumanji.environments.routing.robot_warehouse import MaConnector
+from jumanji.environments.routing.connector.constants import AGENT_INITIAL_VALUE
 from jumanji.types import TimeStep
 from jumanji.wrappers import Wrapper
 
@@ -122,9 +124,9 @@ class LbfWrapper(MultiAgentWrapper):
 
 
 class ConnectorWrapper(MultiAgentWrapper):
-    """Multi-agent wrapper for the Robotic Warehouse environment."""
+    """Multi-agent wrapper for the MA Connector environment."""
 
-    def __init__(self, env: RobotWarehouse):
+    def __init__(self, env: MaConnector):
         super().__init__(env)
 
     def modify_timestep(self, timestep: TimeStep) -> TimeStep[Observation]:
@@ -137,6 +139,7 @@ class ConnectorWrapper(MultiAgentWrapper):
         ) 
         return timestep.replace(observation=observation)
     
+    
     def observation_spec(self) -> specs.Spec[Observation]:
         """Specification of the observation of the environment."""
         step_count = specs.BoundedArray(
@@ -147,12 +150,28 @@ class ConnectorWrapper(MultiAgentWrapper):
             "step_count",
         )
 
+        agents_view = specs.BoundedArray(
+            shape=(self._env.num_agents, self._env.grid_size, self._env.grid_size),
+            dtype=jnp.int32,
+            name="agents_view",
+            minimum=0,
+            maximum=self.num_agents * 3 + AGENT_INITIAL_VALUE,
+        )
+
+        global_state = specs.BoundedArray(
+            shape=(self._env.num_agents, self._env.grid_size, self._env.grid_size),
+            dtype=jnp.int32,
+            name="global_state",
+            minimum=0,
+            maximum=self.num_agents * 3 + AGENT_INITIAL_VALUE,
+        )
+
         spec = specs.Spec(
             ObservationGlobalState,
             "ObservationSpec",
-            agents_view=self._env.observation_spec().grid,
+            agents_view=agents_view,
             action_mask=self._env.observation_spec().action_mask,
-            global_state=self._env.observation_spec().grid,
+            global_state=global_state,
             step_count=step_count,
         )
         return spec
