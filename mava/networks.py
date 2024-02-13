@@ -62,6 +62,8 @@ class FeedForwardActor(nn.Module):
         """Forward pass."""
         x = observation.agents_view
 
+        x = x.reshape((x.shape[0],  -1))
+
         x = self.torso(x)
         actor_logits = nn.Dense(self.num_actions, kernel_init=orthogonal(0.01))(x)
 
@@ -92,6 +94,7 @@ class FeedForwardCritic(nn.Module):
             # Get single agent view in the case of a decentralised critic.
             observation = observation.agents_view
 
+        observation = observation.reshape((observation.shape[0],  -1))
         critic_output = self.torso(observation)
         critic_output = nn.Dense(1, kernel_init=orthogonal(1.0))(critic_output)
 
