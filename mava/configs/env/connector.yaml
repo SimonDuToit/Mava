@@ -1,0 +1,7 @@
+# ---Environment Configs---
+defaults:
+  - _self_
+  - scenario: con-10x10x3a
+
+env_name: MaConnector-v2
+
