@@ -20,7 +20,7 @@ from jumanji import specs
 from jumanji.env import Environment
 #from jumanji.environments.routing.lbf import LevelBasedForaging
 from jumanji.environments.routing.robot_warehouse import RobotWarehouse
-from jumanji.environments.routing.robot_warehouse import MaConnector
+from jumanji.environments.routing.connector import MaConnector
 from jumanji.environments.routing.connector.constants import AGENT_INITIAL_VALUE
 from jumanji.types import TimeStep
 from jumanji.wrappers import Wrapper
