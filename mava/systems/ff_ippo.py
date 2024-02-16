@@ -29,9 +29,9 @@ from omegaconf import DictConfig, OmegaConf
 from optax._src.base import OptState
 from rich.pretty import pprint
 
-from mava import networks
-from mava.evaluator import evaluator_setup
+from mava.evaluator import make_eval_fns
 from mava.networks import FeedForwardActor as Actor
+from mava.networks import FeedForwardCritic as Critic
 from mava.types import (
     ActorApply,
     CriticApply,
@@ -41,13 +41,22 @@ from mava.types import (
     OptStates,
     Params,
     PPOTransition,
+    EvalState,
 )
 from mava.utils import make_env as environments
 from mava.utils.checkpointing import Checkpointer
-from mava.utils.jax import merge_leading_dims, unreplicate_learner_state
+from mava.utils.jax import (
+    merge_leading_dims,
+    unreplicate_batch_dim,
+    unreplicate_learner_state,
+)
 from mava.utils.logger import LogEvent, MavaLogger
 from mava.utils.total_timestep_checker import check_total_timesteps
 from mava.utils.training import make_learning_rate
+from mava.wrappers.episode_metrics import get_final_step_metrics
+
+import jumanji
+from jumanji.environments.routing.connector.generator import Generator, RandomWalkGenerator
 
 
 def get_learner_fn(
@@ -344,15 +353,18 @@ def learner_setup(
     num_actions = int(env.action_spec().num_values[0])
     num_agents = env.action_spec().shape[0]
     config.system.num_agents = num_agents
-    config.system.num_actions = num_actions
+    config.system.action_dim = num_actions
 
     # PRNG keys.
     key, actor_net_key, critic_net_key = keys
 
     # Define network and optimiser.
-    actor_network, critic_network = networks.make(
-        config=config, network="feedforward", centralised_critic=False
-    )
+    actor_torso = hydra.utils.instantiate(config.network.actor_network.pre_torso)
+    actor_action_head = hydra.utils.instantiate(config.network.action_head, action_dim=num_actions)
+    critic_torso = hydra.utils.instantiate(config.network.critic_network.pre_torso)
+
+    actor_network = Actor(torso=actor_torso, action_head=actor_action_head)
+    critic_network = Critic(torso=critic_torso)
 
     actor_lr = make_learning_rate(config.system.actor_lr, config)
     critic_lr = make_learning_rate(config.system.critic_lr, config)
@@ -450,12 +462,14 @@ def run_experiment(_config: DictConfig) -> None:
     """Runs experiment."""
     config = copy.deepcopy(_config)
 
+    n_devices = len(jax.devices())
+
     # Create the enviroments for train and eval.
     env, eval_env = environments.make(config)
 
     # PRNG keys.
     key, key_e, actor_net_key, critic_net_key = jax.random.split(
-        jax.random.PRNGKey(config["system"]["seed"]), num=4
+        jax.random.PRNGKey(config.system.seed), num=4
     )
 
     # Setup learner.
@@ -464,16 +478,11 @@ def run_experiment(_config: DictConfig) -> None:
     )
 
     # Setup evaluator.
-    evaluator, absolute_metric_evaluator, (trained_params, eval_keys) = evaluator_setup(
-        eval_env=eval_env,
-        key_e=key_e,
-        network=actor_network,
-        params=learner_state.params.actor_params,
-        config=config,
-    )
+    # One key per device for evaluation.
+    eval_keys = jax.random.split(key_e, n_devices)
+    evaluator, absolute_metric_evaluator = make_eval_fns(eval_env, actor_network, config)
 
     # Calculate total timesteps.
-    n_devices = len(jax.devices())
     config = check_total_timesteps(config)
     assert (
         config.system.num_updates > config.arch.num_evaluation
@@ -505,7 +514,7 @@ def run_experiment(_config: DictConfig) -> None:
         )
 
     # Run experiment for a total number of evaluations.
-    max_episode_return = jnp.float32(0.0)
+    max_episode_return = jnp.float32(-jnp.inf)
     best_params = None
     for eval_step in range(config.arch.num_evaluation):
         # Train.
@@ -517,19 +526,18 @@ def run_experiment(_config: DictConfig) -> None:
         # Log the results of the training.
         elapsed_time = time.time() - start_time
         t = int(steps_per_rollout * (eval_step + 1))
-        learner_output.episode_metrics["steps_per_second"] = steps_per_rollout / elapsed_time
+        episode_metrics = get_final_step_metrics(learner_output.episode_metrics)
+        episode_metrics["steps_per_second"] = steps_per_rollout / elapsed_time
 
         # Separately log timesteps, actoring metrics and training metrics.
         logger.log({"timestep": t}, t, eval_step, LogEvent.MISC)
-        logger.log(learner_output.episode_metrics, t, eval_step, LogEvent.ACT)
+        logger.log(episode_metrics, t, eval_step, LogEvent.ACT)
         logger.log(learner_output.train_metrics, t, eval_step, LogEvent.TRAIN)
 
         # Prepare for evaluation.
         start_time = time.time()
-        trained_params = jax.tree_util.tree_map(
-            lambda x: x[:, 0, ...],
-            learner_output.learner_state.params.actor_params,  # Select only actor params
-        )
+
+        trained_params = unreplicate_batch_dim(learner_state.params.actor_params)
         key_e, *eval_keys = jax.random.split(key_e, n_devices + 1)
         eval_keys = jnp.stack(eval_keys)
         eval_keys = eval_keys.reshape(n_devices, -1)
@@ -578,6 +586,62 @@ def run_experiment(_config: DictConfig) -> None:
 
     # Stop the logger.
     logger.stop()
+    
+    gen = RandomWalkGenerator(grid_size=10 , num_agents=3)
+    unwrapped_env = jumanji.make('MaConnector-v2', generator=gen)
+    
+    def render_step(render_state):
+        """Step the environment."""
+        # PRNG keys.
+        key, env_state, last_timestep, step_count, episode_return, unwrapped_state, unwrapped_timestep = render_state
+
+        # Select action.
+        key, policy_key = jax.random.split(key)
+        params = jax.tree_map(lambda x: x[0, ...], best_params)
+        pi = actor_network.apply(params, last_timestep.observation)
+
+        if config.arch.evaluation_greedy:
+            action = pi.mode()
+        else:
+            action = pi.sample(seed=policy_key)
+
+        # Step environment.
+        env_state, timestep = env.step(env_state, action)
+        unwrapped_state, unwrapped_timestep = unwrapped_env.step(unwrapped_state, action)
+        # Log episode metrics.
+        episode_return += timestep.reward
+        step_count += 1
+        eval_state = (key, env_state, timestep, step_count, episode_return, unwrapped_state, unwrapped_timestep)
+        return eval_state
+    
+    def not_done(carry: Tuple) -> bool:
+        """Check if the episode is done."""
+        timestep = carry[2]
+        is_not_done: bool = ~timestep.last()
+        return is_not_done
+    
+    for i in range(10):
+        key, eval_key = jax.random.split(key)
+        env_state, timestep = env.reset(eval_key)
+        unwrapped_state, unwrapped_timestep = unwrapped_env.reset(eval_key)
+        key, render_key = jax.random.split(key)
+        
+        init_eval_state = (
+            render_key,
+            env_state,
+            timestep,
+            0,
+            timestep.reward,
+            unwrapped_state,
+            unwrapped_timestep,
+        )
+        val = init_eval_state
+        state_hist = [unwrapped_state]
+        while not_done(val):
+            val = render_step(val)
+            state_hist += [val[-2]]
+        unwrapped_env.animate(state_hist, save_path = "./././././connector.gif")
+    
 
 
 @hydra.main(config_path="../configs", config_name="default_ff_ippo.yaml", version_base="1.2")
