@@ -604,7 +604,7 @@ def run_experiment(_config: DictConfig) -> None:
     #env = ConnectorWrapper(jumanji.make('MaConnector-v2', generator=gen))
     #unwrapped_env = jumanji.make('MaConnector-v2', generator=gen)
 
-    gen = RandomGenerator(num_agents=10, num_rows=10, num_cols=10)
+    gen = RandomGenerator(num_agents=3, num_rows=10, num_cols=10)
     env = CleanerWrapper(jumanji.make('Cleaner-v0', generator=gen))
     unwrapped_env = jumanji.make('Cleaner-v0', generator=gen)
     

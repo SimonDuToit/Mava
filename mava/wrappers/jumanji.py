@@ -123,60 +123,6 @@ class LbfWrapper(MultiAgentWrapper):
         return self.aggregate_rewards(timestep, modified_observation)
 
 
-class OldConnectorWrapper(MultiAgentWrapper):
-    """Multi-agent wrapper for the MA Connector environment."""
-
-    def __init__(self, env: MaConnector):
-        super().__init__(env)
-
-    def modify_timestep(self, timestep: TimeStep) -> TimeStep[Observation]:
-        """Modify the timestep for the Robotic Warehouse environment."""
-        observation = ObservationGlobalState(
-            global_state=jnp.tile(timestep.observation.grid[0], (self._num_agents, 1, 1))[..., jnp.newaxis],
-            agents_view=timestep.observation.grid.reshape(self._env.num_agents, -1),
-            action_mask=timestep.observation.action_mask,
-            step_count=jnp.repeat(timestep.observation.step_count, self._num_agents),
-        ) 
-        print(agents_view.size)
-        return timestep.replace(observation=observation)
-    
-    
-    def observation_spec(self) -> specs.Spec[Observation]:
-        """Specification of the observation of the environment."""
-        step_count = specs.BoundedArray(
-            (self._num_agents,),
-            jnp.int32,
-            [0] * self._num_agents,
-            [self.time_limit] * self._num_agents,
-            "step_count",
-        )
-
-        agents_view = specs.BoundedArray(
-            shape=(self._env.num_agents, self._env.grid_size* self._env.grid_size* 1),
-            dtype=jnp.int32,
-            name="agents_view",
-            minimum=0,
-            maximum=self.num_agents * 3 + AGENT_INITIAL_VALUE,
-        )
-
-        global_state = specs.BoundedArray(
-            shape=(self._env.num_agents, self._env.grid_size, self._env.grid_size, 1),
-            dtype=jnp.int32,
-            name="global_state",
-            minimum=0,
-            maximum=self.num_agents * 3 + AGENT_INITIAL_VALUE,
-        )
-
-        spec = specs.Spec(
-            ObservationGlobalState,
-            "ObservationSpec",
-            agents_view=agents_view,
-            action_mask=self._env.observation_spec().action_mask,
-            global_state=global_state,
-            step_count=step_count,
-        )
-        return spec
-
 class ConnectorWrapper(MultiAgentWrapper):
     """Multi-agent wrapper for the MA Connector environment."""
 
@@ -196,9 +142,9 @@ class ConnectorWrapper(MultiAgentWrapper):
             return agents_view
         
         def convert_global(grid):
-            positions = jnp.where(grid[0] % 3 == 2, True, False)   
-            targets = jnp.where((grid[0] % 3 == 0) & (grid != 0), True, False)
-            paths = jnp.where(grid[0] % 3 == 1, True, False)
+            positions = jnp.where(grid % 3 == 2, True, False)   
+            targets = jnp.where((grid % 3 == 0) & (grid[0] != 0), True, False)
+            paths = jnp.where(grid % 3 == 1, True, False)
             global_state = jnp.stack((positions, targets, paths), -1)
             return global_state
         
@@ -230,7 +176,7 @@ class ConnectorWrapper(MultiAgentWrapper):
         )
 
         global_state = specs.BoundedArray(
-            shape=(self._env.grid_size, self._env.grid_size, 3),
+            shape=(self._env.num_agents, self._env.grid_size, self._env.grid_size, 3),
             dtype=jnp.bool,
             name="global_state",
             minimum=False,
@@ -249,14 +195,13 @@ class ConnectorWrapper(MultiAgentWrapper):
     
 
 class CleanerWrapper(MultiAgentWrapper):
-    """Multi-agent wrapper for the MA Connector environment."""
-    
+    """Multi-agent wrapper for the Cleaner environment."""
 
     def __init__(self, env: Cleaner):
         super().__init__(env)
 
     def modify_timestep(self, timestep: TimeStep) -> TimeStep[Observation]:
-        """Modify the timestep for the Connector environment."""
+        """Modify the timestep for the Cleaner environment."""
 
         def convert_obs(obs):
             DIRTY = 0
@@ -269,14 +214,15 @@ class CleanerWrapper(MultiAgentWrapper):
             xs, ys = agents_locations[:, 0], agents_locations[:, 1] 
             pos_per_agent = jnp.repeat(jnp.zeros_like(grid)[None, :, :], num_agents, axis=0)
             pos_per_agent = pos_per_agent.at[jnp.arange(num_agents), xs, ys].set(1)
-            agents_pos = jnp.tile(pos_per_agent.T, (num_agents, 1, 1, 1))
-            #agents_pos = jnp.tile(jnp.sum(pos_per_agent, axis=0), (num_agents, 1, 1))
+            #agents_pos = jnp.tile(pos_per_agent.T, (num_agents, 1, 1, 1))
+            agents_pos = jnp.tile(jnp.sum(pos_per_agent, axis=0), (num_agents, 1, 1))
 
             transformed = jnp.stack(
-                #[dirty_channel, wall_channel, agents_pos, pos_per_agent], axis=-1
-                [dirty_channel, wall_channel, pos_per_agent], axis=-1
+                [dirty_channel, wall_channel, agents_pos, pos_per_agent], axis=-1
+                #[dirty_channel, wall_channel, pos_per_agent], axis=-1
             )
-            return jnp.concatenate((transformed, agents_pos), -1)
+            return transformed
+            #return jnp.concatenate((transformed, agents_pos), -1)
         
         def convert_global(obs):
             DIRTY = 0
@@ -294,7 +240,7 @@ class CleanerWrapper(MultiAgentWrapper):
             agents_pos = jnp.tile(jnp.sum(pos_per_agent, axis=0), (num_agents, 1, 1))
 
             return jnp.stack(
-                (dirty_channel, wall_channel, agents_pos, pos_per_agent), axis=-1
+                (dirty_channel, wall_channel, agents_pos), axis=-1
             )
         
         agents_view = convert_obs(timestep.observation)
@@ -318,7 +264,8 @@ class CleanerWrapper(MultiAgentWrapper):
         )
 
         agents_view = specs.BoundedArray(
-            shape=(self._env.num_agents, self._env.num_rows, self._env.num_cols, self._env.num_agents + 3),
+            shape=(self._env.num_agents, self._env.num_rows, self._env.num_cols, 4),
+            #shape=(self._env.num_agents, self._env.num_rows, self._env.num_cols, self._env.num_agents + 3),
             dtype=jnp.bool,
             name="agents_view",
             minimum=0,
@@ -326,7 +273,7 @@ class CleanerWrapper(MultiAgentWrapper):
         )
 
         global_state = specs.BoundedArray(
-            shape=(self._env.num_agents, self._env.num_rows, self._env.num_cols, 4),
+            shape=(self._env.num_agents, self._env.num_rows, self._env.num_cols, 3),
             dtype=jnp.bool,
             name="agents_view",
             minimum=0,
