@@ -1,9 +1,9 @@
 # ---Environment Configs---
 defaults:
   - _self_
-  - scenario: con-7x7x5a
+  - scenario: clean-10x10x3a
 
-env_name: MaConnector-v2
+env_name: Cleaner-v0
 
 kwargs:
   time_limit: 100

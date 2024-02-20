@@ -90,6 +90,7 @@ def get_ff_evaluator_fn(
         eval_metrics = {
             "episode_return": final_state.episode_return,
             "episode_length": final_state.step_count,
+            #"num connections": final_state.timestep.extras["num_connections"]
         }
         # Log won episode if win rate is required.
         if log_win_rate:

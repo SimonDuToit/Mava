@@ -2,9 +2,9 @@
 actor_network:
   pre_torso:
     _target_: mava.networks.CNNTorso
-    channel_sizes: [32, 32, 32, 32]
-    kernel_sizes: [3, 3, 3, 3]
-    strides: [1, 1, 1, 1]
+    channel_sizes: [32, 32]
+    kernel_sizes: [3, 3]
+    strides: [1, 1]
     use_layer_norm: False
     activation: relu
 
@@ -14,8 +14,8 @@ action_head:
 critic_network:
   pre_torso:
     _target_: mava.networks.CNNTorso
-    channel_sizes: [32, 32, 32]
-    kernel_sizes: [3, 3, 3, 3]
-    strides: [1, 1, 1, 1]
+    channel_sizes: [32, 32]
+    kernel_sizes: [3, 3]
+    strides: [1, 1]
     use_layer_norm: False
     activation: relu

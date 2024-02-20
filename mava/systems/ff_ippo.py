@@ -57,6 +57,9 @@ from mava.wrappers.episode_metrics import get_final_step_metrics
 
 import jumanji
 from jumanji.environments.routing.connector.generator import Generator, RandomWalkGenerator
+from mava.wrappers.jumanji import ConnectorWrapper
+from jumanji.environments.routing.cleaner.generator import RandomGenerator
+from mava.wrappers.jumanji import CleanerWrapper
 
 
 def get_learner_fn(
@@ -71,6 +74,7 @@ def get_learner_fn(
     actor_apply_fn, critic_apply_fn = apply_fns
     actor_update_fn, critic_update_fn = update_fns
 
+    chex.assert_max_traces(2)
     def _update_step(learner_state: LearnerState, _: Any) -> Tuple[LearnerState, Tuple]:
         """A single update of the network.
 
@@ -88,7 +92,7 @@ def get_learner_fn(
                 - last_timestep (TimeStep): The last timestep in the current trajectory.
             _ (Any): The current metrics info.
         """
-
+        chex.assert_max_traces(2)
         def _env_step(learner_state: LearnerState, _: Any) -> Tuple[LearnerState, PPOTransition]:
             """Step the environment."""
             params, opt_states, key, env_state, last_timestep = learner_state
@@ -125,11 +129,13 @@ def get_learner_fn(
         params, opt_states, key, env_state, last_timestep = learner_state
         last_val = critic_apply_fn(params.critic_params, last_timestep.observation)
 
+        @chex.assert_max_traces(2)
         def _calculate_gae(
             traj_batch: PPOTransition, last_val: chex.Array
         ) -> Tuple[chex.Array, chex.Array]:
             """Calculate the GAE."""
 
+            chex.assert_max_traces(2)
             def _get_advantages(gae_and_next_value: Tuple, transition: PPOTransition) -> Tuple:
                 """Calculate the GAE for a single transition."""
                 gae, next_value = gae_and_next_value
@@ -154,9 +160,11 @@ def get_learner_fn(
 
         advantages, targets = _calculate_gae(traj_batch, last_val)
 
+        @chex.assert_max_traces(2)
         def _update_epoch(update_state: Tuple, _: Any) -> Tuple:
             """Update the network for a single epoch."""
 
+            chex.assert_max_traces(2)
             def _update_minibatch(train_state: Tuple, batch_info: Tuple) -> Tuple:
                 """Update the network for a single minibatch."""
 
@@ -164,6 +172,7 @@ def get_learner_fn(
                 params, opt_states = train_state
                 traj_batch, advantages, targets = batch_info
 
+                chex.assert_max_traces(2)
                 def _actor_loss_fn(
                     actor_params: FrozenDict,
                     actor_opt_state: OptState,
@@ -194,6 +203,7 @@ def get_learner_fn(
                     total_loss_actor = loss_actor - config.system.ent_coef * entropy
                     return total_loss_actor, (loss_actor, entropy)
 
+                chex.assert_max_traces(2)
                 def _critic_loss_fn(
                     critic_params: FrozenDict,
                     critic_opt_state: OptState,
@@ -312,6 +322,7 @@ def get_learner_fn(
         metric = traj_batch.info
         return learner_state, (metric, loss_info)
 
+    @chex.assert_max_traces(2)
     def learner_fn(learner_state: LearnerState) -> ExperimentOutput[LearnerState]:
         """Learner function.
 
@@ -342,6 +353,7 @@ def get_learner_fn(
     return learner_fn
 
 
+chex.assert_max_traces(2)
 def learner_setup(
     env: Environment, keys: chex.Array, config: DictConfig
 ) -> Tuple[LearnerFn[LearnerState], Actor, LearnerState]:
@@ -587,8 +599,14 @@ def run_experiment(_config: DictConfig) -> None:
     # Stop the logger.
     logger.stop()
     
-    gen = RandomWalkGenerator(grid_size=10 , num_agents=3)
-    unwrapped_env = jumanji.make('MaConnector-v2', generator=gen)
+    
+    #gen = RandomWalkGenerator(grid_size=5 , num_agents=2)
+    #env = ConnectorWrapper(jumanji.make('MaConnector-v2', generator=gen))
+    #unwrapped_env = jumanji.make('MaConnector-v2', generator=gen)
+
+    gen = RandomGenerator(num_agents=10, num_rows=10, num_cols=10)
+    env = CleanerWrapper(jumanji.make('Cleaner-v0', generator=gen))
+    unwrapped_env = jumanji.make('Cleaner-v0', generator=gen)
     
     def render_step(render_state):
         """Step the environment."""
@@ -620,27 +638,28 @@ def run_experiment(_config: DictConfig) -> None:
         is_not_done: bool = ~timestep.last()
         return is_not_done
     
-    for i in range(10):
-        key, eval_key = jax.random.split(key)
-        env_state, timestep = env.reset(eval_key)
-        unwrapped_state, unwrapped_timestep = unwrapped_env.reset(eval_key)
-        key, render_key = jax.random.split(key)
-        
-        init_eval_state = (
-            render_key,
-            env_state,
-            timestep,
-            0,
-            timestep.reward,
-            unwrapped_state,
-            unwrapped_timestep,
-        )
-        val = init_eval_state
-        state_hist = [unwrapped_state]
-        while not_done(val):
-            val = render_step(val)
-            state_hist += [val[-2]]
-        unwrapped_env.animate(state_hist, save_path = "./././././connector.gif")
+    key, eval_key = jax.random.split(key)
+    env_state, timestep = env.reset(eval_key)
+    unwrapped_state, unwrapped_timestep = unwrapped_env.reset(eval_key)
+    key, render_key = jax.random.split(key)
+    
+    init_eval_state = (
+        render_key,
+        env_state,
+        timestep,
+        0,
+        timestep.reward,
+        unwrapped_state,
+        unwrapped_timestep,
+    )
+    val = init_eval_state
+    state_hist = [env_state]
+    while not_done(val):
+        val = render_step(val)
+        state_hist += [val[1]]
+    #filename = "connector"
+    filename = "cleaner"
+    unwrapped_env.animate(state_hist, save_path = "./././././" + filename + ".gif")
     
 
 

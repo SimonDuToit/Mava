@@ -118,6 +118,7 @@ class FeedForwardActor(nn.Module):
     action_head: nn.Module
 
     @nn.compact
+    @chex.assert_max_traces(10)
     def __call__(self, observation: Observation) -> distrax.DistributionLike:
         """Forward pass."""
 
@@ -133,6 +134,7 @@ class FeedForwardCritic(nn.Module):
     centralised_critic: bool = False
 
     @nn.compact
+    @chex.assert_max_traces(10)
     def __call__(self, observation: Union[Observation, ObservationGlobalState]) -> chex.Array:
         """Forward pass."""
         if self.centralised_critic:

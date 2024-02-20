@@ -1,0 +1,7 @@
+# The config of the 15x15-4p-5f scenario with the VectorObserver set as default
+task_name: clean-10x10x3a
+
+task_config:
+  num_rows: 5
+  num_cols: 5
+  num_agents: 3

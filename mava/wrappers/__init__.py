@@ -14,5 +14,5 @@
 
 from mava.wrappers.episode_metrics import RecordEpisodeMetrics
 from mava.wrappers.jaxmarl import JaxMarlWrapper
-from mava.wrappers.jumanji import ConnectorWrapper, LbfWrapper, RwareWrapper
+from mava.wrappers.jumanji import ConnectorWrapper, LbfWrapper, RwareWrapper, CleanerWrapper
 from mava.wrappers.observation import AgentIDWrapper, GlobalStateWrapper

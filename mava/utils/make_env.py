@@ -27,6 +27,10 @@ from jumanji.environments.routing.robot_warehouse.generator import (
 from jumanji.environments.routing.connector.generator import (
     RandomWalkGenerator as ConnectorRandomGenerator,
 )
+from jumanji.environments.routing.cleaner.generator import (
+    RandomGenerator as CleanerRandomGenerator,
+)
+
 from jumanji.wrappers import AutoResetWrapper
 from omegaconf import DictConfig
 
@@ -37,7 +41,8 @@ from mava.wrappers import (
     LbfWrapper,
     RecordEpisodeMetrics,
     RwareWrapper,
-    ConnectorWrapper
+    ConnectorWrapper,
+    CleanerWrapper
 )
 
 # Registry mapping environment names to their generator and wrapper classes.
@@ -45,6 +50,7 @@ _jumanji_registry = {
     "RobotWarehouse-v0": {"generator": RwareRandomGenerator, "wrapper": RwareWrapper},
     "LevelBasedForaging-v0": {"generator": LbfRandomGenerator, "wrapper": LbfWrapper},
     "MaConnector-v2": {"generator":ConnectorRandomGenerator, "wrapper": ConnectorWrapper},
+    "Cleaner-v0": {"generator":CleanerRandomGenerator, "wrapper": CleanerWrapper},
 }
 
 
