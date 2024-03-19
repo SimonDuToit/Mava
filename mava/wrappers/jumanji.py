@@ -221,8 +221,12 @@ class ConnectorWrapper(MultiAgentWrapper):
             "action_mask": timestep.observation.action_mask,
             "step_count": jnp.repeat(timestep.observation.step_count, self.num_agents),
         }
-
-        return timestep.replace(observation=Observation(**obs_data))
+        team_reward = jnp.sum(timestep.reward)
+        reward = jnp.repeat(team_reward, self.num_agents)
+        discount = jnp.repeat(jnp.max(timestep.discount), self.num_agents)
+        return timestep.replace(
+            observation=Observation(**obs_data), reward=reward, discount=discount
+        )
 
     def get_global_state(self, obs: Observation) -> chex.Array:
         """Constructs the global state from the global information
