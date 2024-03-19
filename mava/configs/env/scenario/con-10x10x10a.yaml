@@ -5,3 +5,6 @@ task_name: con-10x10x10a
 task_config:
   grid_size: 10
   num_agents: 10
+
+kwargs:
+  time_limit: 100
