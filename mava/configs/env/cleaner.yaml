@@ -14,5 +14,7 @@ eval_metric: episode_return
 # This should not be changed.
 implicit_agent_id: True
 
+hide_dirty: False
+
 kwargs:
   {}  # time limit set in scenario

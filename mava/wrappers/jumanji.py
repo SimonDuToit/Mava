@@ -272,9 +272,14 @@ class ConnectorWrapper(MultiAgentWrapper):
 class CleanerWrapper(MultiAgentWrapper):
     """Multi-agent wrapper for the Cleaner environment."""
 
-    def __init__(self, env: Cleaner, add_global_state: bool = False):
+    def __init__(self, env: Cleaner, add_global_state: bool = False, hide_dirty: bool = False):
         super().__init__(env, add_global_state)
         self._env: Cleaner
+        self._hide_dirty
+        if hide_dirty:
+            self._obs_channel_dim = 3
+        else:
+            self._obs_channel_dim = 4
 
     def modify_timestep(self, timestep: TimeStep) -> TimeStep[Observation]:
         """Modify the timestep for the Cleaner environment."""
@@ -289,12 +294,14 @@ class CleanerWrapper(MultiAgentWrapper):
             # A: Number of agents
             # R: Number of grid rows
             # C: Number of grid columns
+            # D: Number of channels in observation
             # grid: (R, C)
             # agents_locations: (A, 2)
 
             # Get dirty / wall tiles from first agent's obs and tile in agents dimension.
 
-            dirty_channel = jnp.tile(grid == DIRTY, (num_agents, 1, 1))  # (A, R, C)
+            if not self._hide_dirty:
+                dirty_channel = jnp.tile(grid == DIRTY, (num_agents, 1, 1))  # (A, R, C)
             wall_channel = jnp.tile(grid == WALL, (num_agents, 1, 1))  # (A, R, C)
 
             # Get each agent's position.
@@ -309,10 +316,16 @@ class CleanerWrapper(MultiAgentWrapper):
             agents_channel = jnp.tile(jnp.sum(pos_per_agent, axis=0), (num_agents, 1, 1))
 
             # Stack the channels along the last dimension.
-            agents_view = jnp.stack(
-                [dirty_channel, wall_channel, agents_channel, pos_per_agent],
-                axis=-1,  # (A, R, C, 4)
-            )
+            if self.hide_dirty:
+                agents_view = jnp.stack(
+                    [wall_channel, agents_channel, pos_per_agent],
+                    axis=-1,  # (A, R, C, D)
+                )
+            else:
+                agents_view = jnp.stack(
+                    [dirty_channel, wall_channel, agents_channel, pos_per_agent],
+                    axis=-1,  # (A, R, C, D)
+                )
             return agents_view
 
         obs_data = {
@@ -337,7 +350,7 @@ class CleanerWrapper(MultiAgentWrapper):
         """Constructs the global state from the global information
         in the agent observations (dirty tiles, wall tiles and agent positions).
         """
-        return obs.agents_view[..., :3]  # (A, R, C, 3)
+        return obs.agents_view[..., :-1]  # (A, R, C, D-1)
 
     def observation_spec(self) -> specs.Spec[Union[Observation, ObservationGlobalState]]:
         """Specification of the observation of the environment."""
@@ -349,7 +362,7 @@ class CleanerWrapper(MultiAgentWrapper):
             "step_count",
         )
         agents_view = specs.BoundedArray(
-            shape=(self.num_agents, self._env.num_rows, self._env.num_cols, 4),
+            shape=(self.num_agents, self._env.num_rows, self._env.num_cols, self._obs_channel_dim),
             dtype=bool,
             name="agents_view",
             minimum=0,
@@ -362,7 +375,12 @@ class CleanerWrapper(MultiAgentWrapper):
         }
         if self.add_global_state:
             global_state = specs.BoundedArray(
-                shape=(self.num_agents, self._env.num_rows, self._env.num_cols, 3),
+                shape=(
+                    self.num_agents,
+                    self._env.num_rows,
+                    self._env.num_cols,
+                    self._obs_channel_dim - 1,
+                ),
                 dtype=bool,
                 name="agents_view",
                 minimum=0,
