@@ -272,14 +272,14 @@ class ConnectorWrapper(MultiAgentWrapper):
 class CleanerWrapper(MultiAgentWrapper):
     """Multi-agent wrapper for the Cleaner environment."""
 
-    def __init__(self, env: Cleaner, add_global_state: bool = False, hide_dirty: bool = False):
+    def __init__(self, env: Cleaner, add_global_state: bool = False, hide_dirty: bool = True):
         super().__init__(env, add_global_state)
         self._env: Cleaner
-        self._hide_dirty
+        self._hide_dirty = hide_dirty
+        self._obs_channel_dim = 4
         if hide_dirty:
             self._obs_channel_dim = 3
-        else:
-            self._obs_channel_dim = 4
+            
 
     def modify_timestep(self, timestep: TimeStep) -> TimeStep[Observation]:
         """Modify the timestep for the Cleaner environment."""
@@ -316,7 +316,7 @@ class CleanerWrapper(MultiAgentWrapper):
             agents_channel = jnp.tile(jnp.sum(pos_per_agent, axis=0), (num_agents, 1, 1))
 
             # Stack the channels along the last dimension.
-            if self.hide_dirty:
+            if self._hide_dirty:
                 agents_view = jnp.stack(
                     [wall_channel, agents_channel, pos_per_agent],
                     axis=-1,  # (A, R, C, D)
