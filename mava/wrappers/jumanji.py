@@ -236,8 +236,12 @@ class ConnectorWrapper(MultiAgentWrapper):
         team_reward = jnp.sum(timestep.reward)
         reward = jnp.repeat(team_reward, self.num_agents)
         discount = jnp.repeat(jnp.max(timestep.discount), self.num_agents)
+
+        # The episode is won if every agent is connected.
+        extras = {"won_episode": timestep.extras["num_connections"] == self.num_agents}
+
         return timestep.replace(
-            observation=Observation(**obs_data), reward=reward, discount=discount
+            observation=Observation(**obs_data), reward=reward, discount=discount, extras=extras
         )
 
     def get_global_state(self, obs: Observation) -> chex.Array:

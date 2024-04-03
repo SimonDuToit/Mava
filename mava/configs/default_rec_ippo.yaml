@@ -3,5 +3,5 @@ defaults:
   - arch: anakin
   - system: ppo/rec_ippo
   - network: rcnn
-  - env: cleaner
+  - env: connector
   - _self_

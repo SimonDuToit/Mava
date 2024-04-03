@@ -3,5 +3,5 @@ defaults:
   - arch: anakin
   - system: ppo/ff_ippo
   - network: cnn
-  - env: cleaner
+  - env: connector
   - _self_
