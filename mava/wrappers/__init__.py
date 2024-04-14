@@ -19,3 +19,5 @@ from mava.wrappers.jaxmarl import MabraxWrapper, SmaxWrapper
 from mava.wrappers.jumanji import ConnectorWrapper, LbfWrapper, RwareWrapper
 from mava.wrappers.matrax import MatraxWrapper
 from mava.wrappers.observation import AgentIDWrapper
+
+from mava.wrappers.centralized import CentralizedWrapper

@@ -342,7 +342,8 @@ def learner_setup(
     n_devices = len(jax.devices())
 
     # Get number of agents.
-    config.system.num_agents = env.num_agents
+    # config.system.num_agents = env.num_agents
+    config.system.num_agents = 1 
 
     # PRNG keys.
     key, actor_net_key, critic_net_key = keys
@@ -376,6 +377,8 @@ def learner_setup(
     # Initialise actor params and optimiser state.
     actor_params = actor_network.init(actor_net_key, init_x)
     actor_opt_state = actor_optim.init(actor_params)
+
+    
 
     # Initialise critic params and optimiser state.
     critic_params = critic_network.init(critic_net_key, init_x)

@@ -105,7 +105,9 @@ class DiscreteActionHead(nn.Module):
         """
 
         actor_logits = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01))(obs_embedding)
-
+        #print(actor_logits.shape)
+        #print(observation.action_mask.shape)
+        #print('=====')
         masked_logits = jnp.where(
             observation.action_mask,
             actor_logits,
@@ -168,7 +170,6 @@ class FeedForwardActor(nn.Module):
     @nn.compact
     def __call__(self, observation: Observation) -> tfd.Distribution:
         """Forward pass."""
-
         obs_embedding = self.torso(observation.agents_view)
 
         return self.action_head(obs_embedding, observation)

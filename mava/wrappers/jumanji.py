@@ -206,15 +206,22 @@ class ConnectorWrapper(MultiAgentWrapper):
 
         # TARGET = 3 = The number of different types of items on the grid.
         def create_agents_view(grid: chex.Array) -> chex.Array:
-            positions = jnp.where(grid % TARGET == POSITION, True, False)
-            targets = jnp.where((grid % TARGET == 0) & (grid != EMPTY), True, False)
-            paths = jnp.where(grid % TARGET == PATH, True, False)
-            position_per_agent = jnp.where(grid == POSITION, True, False)
-            target_per_agent = jnp.where(grid == TARGET, True, False)
-            agents_view = jnp.stack(
-                (positions, targets, paths, position_per_agent, target_per_agent), -1
-            )
+            numbered_positions = jnp.where(grid % TARGET == POSITION, jnp.ceil(grid / TARGET), 0)
+            numbered_targets = jnp.where((grid % TARGET == 0) & (grid != EMPTY), jnp.ceil(grid / TARGET), 0)
+            paths = jnp.where(grid % TARGET == PATH, 1, 0)
+            my_position = jnp.where(grid == POSITION, 1, 0)
+            my_target = jnp.where(grid == TARGET, 1, 0)
+            agents_view = jnp.stack((numbered_positions, numbered_targets, paths, my_position, my_target), -1)
             return agents_view
+        
+        def aggregate_rewards(
+            timestep: TimeStep, observation: Observation
+            ) -> TimeStep[Observation]:
+                """Aggregate individual rewards and discounts across agents."""
+                team_reward = jnp.sum(timestep.reward)
+                reward = jnp.repeat(team_reward, self.num_agents)
+                discount = jnp.repeat(jnp.max(timestep.discount), self.num_agents)
+                return timestep.replace(observation=observation, reward=reward, discount=discount) 
 
         obs_data = {
             "agents_view": create_agents_view(timestep.observation.grid),
@@ -222,14 +229,10 @@ class ConnectorWrapper(MultiAgentWrapper):
             "step_count": jnp.repeat(timestep.observation.step_count, self.num_agents),
         }
 
-        return timestep.replace(observation=Observation(**obs_data))
+        return aggregate_rewards(timestep, Observation(**obs_data))
 
     def get_global_state(self, obs: Observation) -> chex.Array:
-        """Constructs the global state from the global information
-        in the agent observations (positions, targets and paths.)
-        """
-
-        return obs.agents_view[..., :3]
+            return jnp.tile(obs.agents_view[..., :3][0], (obs.agents_view.shape[0], 1, 1, 1))
 
     def observation_spec(self) -> specs.Spec[Union[Observation, ObservationGlobalState]]:
         """Specification of the observation of the environment."""
@@ -240,26 +243,26 @@ class ConnectorWrapper(MultiAgentWrapper):
             jnp.repeat(self.time_limit, self.num_agents),
             "step_count",
         )
+
         agents_view = specs.BoundedArray(
             shape=(self._env.num_agents, self._env.grid_size, self._env.grid_size, 5),
-            dtype=bool,
+            dtype=int,
             name="agents_view",
-            minimum=False,
-            maximum=True,
+            minimum=0,
+            maximum=self._env.num_agents,
         )
         obs_data = {
             "agents_view": agents_view,
             "action_mask": self._env.observation_spec().action_mask,
             "step_count": step_count,
         }
-
         if self.add_global_state:
             global_state = specs.BoundedArray(
                 shape=(self._env.num_agents, self._env.grid_size, self._env.grid_size, 3),
-                dtype=bool,
+                dtype=int,
                 name="global_state",
-                minimum=False,
-                maximum=True,
+                minimum=0,
+                maximum=self._env.num_agents,
             )
             obs_data["global_state"] = global_state
             return specs.Spec(ObservationGlobalState, "ObservationSpec", **obs_data)
