@@ -132,10 +132,11 @@ def load_teacher(key, config):
 
     # Generate D with teacher
     @jax.jit
-    def env_step(_, carry):
+    def env_step(carry):
         """Step the environment."""
         # SELECT ACTION
         i, key, env_state, last_timestep, buffer_state = carry
+        i = i + 1
         action, logits = batched_get_action_and_logits(replicate_params, last_timestep.observation)
 
         # STEP ENVIRONMENT
@@ -145,7 +146,7 @@ def load_teacher(key, config):
             last_timestep.observation, logits
         )
         buffer.add(buffer_state, transition)
-        carry = key, env_state, timestep, buffer_state
+        carry = i, key, env_state, timestep, buffer_state
         return carry
 
     step_init = 0, key, env_states, timesteps, buffer_state
@@ -162,8 +163,8 @@ def learner_setup(
     n_devices = len(jax.devices())
 
     # Get number of agents.
-    # config.system.num_agents = env.num_agents
-    config.system.num_agents = 1 
+    config.system.num_agents = env.num_agents
+    #config.system.num_agents = 1 
 
     # PRNG keys.
     key, actor_net_key = keys
