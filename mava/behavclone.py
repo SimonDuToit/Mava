@@ -110,7 +110,7 @@ def load_teacher(key, config):
         action = output.sample(seed=key)
         return action, logits
 
-    batched_get_action_and_logits = jax.pmap(jax.vmap(get_action_and_logits))
+    batched_get_action_and_logits = jax.vmap(jax.vmap(get_action_and_logits))
 
     # Construct dataset
 
@@ -139,7 +139,7 @@ def load_teacher(key, config):
         action, logits = batched_get_action_and_logits(replicate_params, last_timestep.observation)
 
         # STEP ENVIRONMENT
-        env_state, timestep = jax.pmap(jax.vmap(jax.vmap(env.step)))(env_state, action)
+        env_state, timestep = jax.vmap(jax.vmap(jax.vmap(env.step)))(env_state, action)
 
         transition = (
             last_timestep.observation, logits
