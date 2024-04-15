@@ -151,7 +151,11 @@ def load_teacher(key, config):
 
     step_init = 0, key, env_states, timesteps, buffer_state
     #jax.lax.scan(env_step, step_init, None, NUM_STEPS)
-    jax.lax.while_loop(lambda x: x[0] < NUM_STEPS, env_step, step_init)
+    #jax.lax.while_loop(lambda x: x[0] < NUM_STEPS, env_step, step_init)
+    
+    carry = step_init
+    for i in range(NUM_STEPS):
+        carry = env_step(carry)
     return buffer, buffer_state
 
 
