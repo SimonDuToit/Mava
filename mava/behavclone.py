@@ -110,7 +110,7 @@ def load_teacher(key, config):
         action = output.sample(seed=key)
         return action, logits
 
-    batched_get_action_and_logits = jax.vmap(jax.vmap(get_action_and_logits))
+    batched_get_action_and_logits = jax.pmap(jax.vmap(get_action_and_logits))
 
     # Construct dataset
 
@@ -135,11 +135,11 @@ def load_teacher(key, config):
     def env_step(_, carry):
         """Step the environment."""
         # SELECT ACTION
-        key, env_state, last_timestep, buffer_state = carry
+        i, key, env_state, last_timestep, buffer_state = carry
         action, logits = batched_get_action_and_logits(replicate_params, last_timestep.observation)
 
         # STEP ENVIRONMENT
-        env_state, timestep = jax.vmap(jax.vmap(jax.vmap(env.step)))(env_state, action)
+        env_state, timestep = jax.pmap(jax.vmap(jax.vmap(env.step)))(env_state, action)
 
         transition = (
             last_timestep.observation, logits
@@ -148,9 +148,9 @@ def load_teacher(key, config):
         carry = key, env_state, timestep, buffer_state
         return carry
 
-    step_init = key, env_states, timesteps, buffer_state
+    step_init = 0, key, env_states, timesteps, buffer_state
     #jax.lax.scan(env_step, step_init, None, NUM_STEPS)
-    jax.lax.fori_loop(0, NUM_STEPS, env_step, step_init)
+    jax.lax.while_loop(lambda x: x[0] < NUM_STEPS, env_step, step_init)
     return buffer, buffer_state
 
 
