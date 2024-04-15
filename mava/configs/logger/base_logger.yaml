@@ -29,4 +29,4 @@ checkpointing:
 
   load_model: False # Whether to load model checkpoints.
   load_args:
-    checkpoint_uid: "central" # Unique identifier for checkpoint to load.
+    checkpoint_uid: decentral # Unique identifier for checkpoint to load.
