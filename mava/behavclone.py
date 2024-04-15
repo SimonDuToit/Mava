@@ -114,7 +114,7 @@ def load_teacher(key, config):
 
     # Construct dataset
 
-    NUM_STEPS = 1000_000
+    NUM_STEPS = 100_000
 
     # Flashbax buffer
     max_length = NUM_STEPS
@@ -131,7 +131,8 @@ def load_teacher(key, config):
     buffer_state = buffer.init((timesteps.observation, init_logits))
 
     # Generate D with teacher
-    def env_step(carry, _):
+    @jax.jit
+    def env_step(_, carry):
         """Step the environment."""
         # SELECT ACTION
         key, env_state, last_timestep, buffer_state = carry
@@ -145,10 +146,11 @@ def load_teacher(key, config):
         )
         buffer.add(buffer_state, transition)
         carry = key, env_state, timestep, buffer_state
-        return carry, _
+        return carry
 
     step_init = key, env_states, timesteps, buffer_state
-    jax.lax.scan(env_step, step_init, None, NUM_STEPS)
+    #jax.lax.scan(env_step, step_init, None, NUM_STEPS)
+    jax.lax.fori_loop(0, NUM_STEPS, env_step, step_init)
     return buffer, buffer_state
 
 
