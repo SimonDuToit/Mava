@@ -86,7 +86,8 @@ def load_teacher(key, config):
     replicate_params = flax.jax_utils.replicate(replicate_params, devices=jax.devices())
 
     evaluator, absolute_metric_evaluator = make_eval_fns(eval_env, actor_network, config)
-    n_devices = 1
+    n_devices = len(jax.devices())
+
     logger = MavaLogger(config)
 
     start_time = time.time()
