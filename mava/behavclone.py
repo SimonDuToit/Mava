@@ -79,7 +79,7 @@ def load_teacher(key, config):
 
     broadcast = lambda x: jnp.broadcast_to(x, (config.system.update_batch_size,) + x.shape)
     replicate_params = jax.tree_map(broadcast, teacher_params)
-    replicate_params = flax.jax_utils.replicate(replicate_params, devices=jax.devices())
+    #replicate_params = flax.jax_utils.replicate(replicate_params, devices=jax.devices())
 
     # Initialize Env info
 
@@ -110,7 +110,7 @@ def load_teacher(key, config):
         action = output.sample(seed=key)
         return action, logits
 
-    batched_get_action_and_logits = jax.pmap(jax.vmap(get_action_and_logits))
+    batched_get_action_and_logits = jax.vmap(get_action_and_logits)
 
     # Construct dataset
 
@@ -127,35 +127,40 @@ def load_teacher(key, config):
     # Instantiate the flat buffer, which is a Dataclass of pure functions.
     buffer = fbx.make_item_buffer(max_length, min_length, sample_batch_size, False, False)
 
-    init_logits = batched_get_action_and_logits(replicate_params, timesteps.observation)[1]
-    buffer_state = buffer.init((timesteps.observation, init_logits))
+    
+
+    def make_device_buffer_state(params, obs):
+        init_logits = batched_get_action_and_logits(params, obs)[1]
+        return buffer.init((obs, init_logits))
+
+    #buffer_state = buffer.init((timesteps.observation, init_logits))
+    buffer_state = jax.pmap(make_device_buffer_state, in_axes=(None, 0))(replicate_params, timesteps.observation)
 
     # Generate D with teacher
     @jax.jit
-    def env_step(carry):
+    def env_step(carry, _):
         """Step the environment."""
         # SELECT ACTION
-        i, key, env_state, last_timestep, buffer_state = carry
-        i = i + 1
+        key, env_state, last_timestep, buffer_state = carry
         action, logits = batched_get_action_and_logits(replicate_params, last_timestep.observation)
 
         # STEP ENVIRONMENT
-        env_state, timestep = jax.pmap(jax.vmap(jax.vmap(env.step)))(env_state, action)
+        env_state, timestep = jax.vmap(jax.vmap(env.step))(env_state, action)
 
         transition = (
             last_timestep.observation, logits
         )
         buffer.add(buffer_state, transition)
-        carry = i, key, env_state, timestep, buffer_state
-        return carry
+        carry = key, env_state, timestep, buffer_state
+        return carry, _
 
-    step_init = 0, key, env_states, timesteps, buffer_state
-    #jax.lax.scan(env_step, step_init, None, NUM_STEPS)
-    #jax.lax.while_loop(lambda x: x[0] < NUM_STEPS, env_step, step_init)
     
-    carry = step_init
-    for i in range(NUM_STEPS):
-        carry = env_step(carry)
+    def generate_exp(key, env_states, timesteps, buffer_state):   
+        step_init = key, env_states, timesteps, buffer_state
+        jax.lax.scan(env_step, step_init, None, NUM_STEPS)
+
+    jax.pmap(generate_exp, in_axes = (None, 0, 0, 0))(key, env_states, timesteps, buffer_state)
+    #jax.lax.while_loop(lambda x: x[0] < NUM_STEPS, env_step, step_init)
     return buffer, buffer_state
 
 
@@ -478,7 +483,8 @@ def run_experiment(_config: DictConfig) -> float:
         # Train.
         start_time = time.time()
         key, batch_key = jax.random.split(key)
-        batch = buffer.sample(buffer_state, batch_key)
+        batch_keys = jax.random.split(batch_key, len(jax.devices()))
+        batch = jax.pmap(buffer.sample)(buffer_state, batch_keys)
 
         def inner(x):
             return x[0]
