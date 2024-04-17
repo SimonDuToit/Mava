@@ -81,14 +81,20 @@ def load_teacher(key, config):
     replicate_params = jax.tree_map(broadcast, teacher_params)
     #replicate_params = flax.jax_utils.replicate(replicate_params, devices=jax.devices())
 
-    # Initialize Env info
+    # Instantiate the flat buffer, which is a Dataclass of pure functions.
+    
 
+    return actor_network, replicate_params
+
+def generate_exp(key, buffer, config, network, params, NUM_STEPS):
+
+    env, eval_env = environments.make(config)
     n_devices = len(jax.devices())
 
     key, env_key = jax.random.split(key)
     # Initialise environment states and timesteps: across devices and batches.
     key, *env_keys = jax.random.split(
-        key, n_devices * config.system.update_batch_size * config.arch.num_envs + 1
+        env_key, n_devices * config.system.update_batch_size * config.arch.num_envs + 1
         #key, n_devices * config.system.update_batch_size + 1
     )
     env_states, timesteps = jax.vmap(env.reset, in_axes=(0))(
@@ -105,7 +111,7 @@ def load_teacher(key, config):
     # Define policy function
 
     def get_action_and_logits(params, obs):
-        output = teacher_policy(params, obs)
+        output = network.apply(params, obs)
         logits = output.distribution.logits
         action = output.sample(seed=key)
         return action, logits
@@ -114,27 +120,12 @@ def load_teacher(key, config):
 
     # Construct dataset
 
-    NUM_STEPS = 100_000
-
-    # Flashbax buffer
-    max_length = NUM_STEPS
-    min_length = 1
-    sample_batch_size = 1
-
-    add_sequences = False
-    add_batch_size = None
-
-    # Instantiate the flat buffer, which is a Dataclass of pure functions.
-    buffer = fbx.make_item_buffer(max_length, min_length, sample_batch_size, False, False)
-
-    
-
     def make_device_buffer_state(params, obs):
         init_logits = batched_get_action_and_logits(params, obs)[1]
         return buffer.init((obs, init_logits))
 
     #buffer_state = buffer.init((timesteps.observation, init_logits))
-    buffer_state = jax.pmap(make_device_buffer_state, in_axes=(None, 0))(replicate_params, timesteps.observation)
+    buffer_state = jax.pmap(make_device_buffer_state, in_axes=(None, 0))(params, timesteps.observation)
 
     # Generate D with teacher
     @jax.jit
@@ -142,7 +133,7 @@ def load_teacher(key, config):
         """Step the environment."""
         # SELECT ACTION
         key, env_state, last_timestep, buffer_state = carry
-        action, logits = batched_get_action_and_logits(replicate_params, last_timestep.observation)
+        action, logits = batched_get_action_and_logits(params, last_timestep.observation)
 
         # STEP ENVIRONMENT
         env_state, timestep = jax.vmap(jax.vmap(env.step))(env_state, action)
@@ -161,7 +152,7 @@ def load_teacher(key, config):
 
     jax.pmap(generate_exp, in_axes = (None, 0, 0, 0))(key, env_states, timesteps, buffer_state)
     #jax.lax.while_loop(lambda x: x[0] < NUM_STEPS, env_step, step_init)
-    return buffer, buffer_state
+    return buffer_state
 
 
 def learner_setup(
@@ -320,7 +311,10 @@ def run_experiment(_config: DictConfig) -> float:
     n_devices = len(jax.devices())
 
     key = jax.random.PRNGKey(config.system.seed)
-    buffer, buffer_state = load_teacher(key, config)
+    teacher_network, teacher_params = load_teacher(key, config)
+    BUFF_SIZE = 100_000
+    buffer = fbx.make_item_buffer(BUFF_SIZE, 1, 1, False, False)
+    buffer_state = generate_exp(key, buffer, config, teacher_network, teacher_params, BUFF_SIZE)
 
     # Create the enviroments for train and eval.
     env, eval_env = environments.make(config)
@@ -377,24 +371,26 @@ def run_experiment(_config: DictConfig) -> float:
     max_episode_return = -jnp.inf
     best_params = None
     for eval_step in range(config.arch.num_evaluation):
-        # Train.
-        start_time = time.time()
-        key, batch_key = jax.random.split(key)
-        
-        batch_keys = jax.random.split(batch_key, len(jax.devices()))
-        batch = jax.pmap(buffer.sample)(buffer_state, batch_keys)
-        def inner(x):
-            return x[:, 0, ...]
-        def swap(x):
-            return jnp.swapaxes(x, 0, 1)
-        batch = jax.tree_map(inner, batch)
-        #batch = jax.tree_map(swap, batch)
+        for i in range(100):
+            # Train.
+            start_time = time.time()
+            key, batch_key = jax.random.split(key)
+            
+            batch_keys = jax.random.split(batch_key, len(jax.devices()))
+            batch = jax.pmap(buffer.sample)(buffer_state, batch_keys)
+            def inner(x):
+                return x[:, 0, ...]
+            def swap(x):
+                return jnp.swapaxes(x, 0, 1)
+            batch = jax.tree_map(inner, batch)
+            #batch = jax.tree_map(swap, batch)
 
-        params, opt_state, keys = learner_state
-        learner_output = learn(learner_state, batch)
-        
+            params, opt_state, keys = learner_state
+            learner_output = learn(learner_state, batch)          
+            
+            learner_state, loss_info = learner_output
+
         jax.block_until_ready(learner_output)
-
         # Log the results of the training.
         elapsed_time = time.time() - start_time
         t = int(steps_per_rollout * (eval_step + 1))
