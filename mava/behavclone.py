@@ -245,85 +245,43 @@ def get_learner_fn(
     config: DictConfig,
 ) -> LearnerFn[LearnerState]:
     """Get the learner function."""
+    
+    def learner_fn(learner_state: Any, batch: Any) -> Tuple:
+            """Learner function.
 
+            This function represents the learner, it updates the network parameters
+            by iteratively applying the `_update_step` function for a fixed number of
+            updates. The `_update_step` function is vectorized over a batch of inputs.
 
-    def _update_step(learner_state: Any, batch: Any) -> Tuple[LearnerState, Tuple]:
+            Args:
+                learner_state (NamedTuple):
+                    - params (Params): The initial model parameters.
+                    - opt_states (OptStates): The initial optimizer state.
+                    - key (chex.PRNGKey): The random number generator state.
+                    - env_state (LogEnvState): The environment state.
+                    - timesteps (TimeStep): The initial timestep in the initial trajectory.
+            """
 
-        # Sample experience batch
-        params, opt_state, key = learner_state
-        
-        #print(batch.experience[1])
-        obs, target = batch.experience
+            
+            
+            def get_action_and_logits(params, obs, key):
+                output = apply_fn(params, obs)
+                logits = output.distribution.logits
+                action = output.sample(seed=key)
+                return action, logits
 
-        '''
-        learner_state, traj_batch = jax.lax.scan(
-            _env_step, learner_state, None, config.system.rollout_length
-        )
-        '''
+            def loss_fn(params, obs, target, key):
+                action, logits = get_action_and_logits(params, obs, key.astype(jnp.uint32))
+                return optax.softmax_cross_entropy(logits, target).mean()
+            
 
-        def _update_epoch(update_state: Tuple, _: Any) -> Tuple:
-            """Update the network for a single epoch."""
+            #def update(key, params, obs, target):
+            def update(learner_state, batch):
+                    
+                params, opt_state, key = learner_state
+                obs, target = batch.experience
 
-            def _update_minibatch(train_state: Tuple, batch_info: Tuple) -> Tuple:
-                """Update the network for a single minibatch."""
-
-                # UNPACK TRAIN STATE AND BATCH INFO
-                params, opt_state, key = train_state
-                obs, target = batch_info
-
-                '''
-                def _loss_fn(
-                    params: FrozenDict,
-                    actor_opt_state: OptState,
-                    obs,
-                    outputs: chex.Array,
-                    key: chex.PRNGKey,
-                ) -> Tuple:
-                    """Calculate the actor loss."""
-                    # RERUN NETWORK
-                    policy = apply_fn(params, obs)
-
-                    # CALCULATE ACTOR LOSS
-                    loss_actor = optax.softmax_cross_entropy(outputs)
-                    # The seed will be used in the TanhTransformedDistribution:
-                    entropy = policy.entropy(seed=key).mean()
-                    total_loss_actor = loss_actor - config.system.ent_coef * entropy
-                    return total_loss_actor, (loss_actor, entropy)
-                '''
-
-                # CALCULATE ACTOR LOSS
-                key, entropy_key = jax.random.split(key)
-                '''
-                actor_grad_fn = jax.value_and_grad(_actor_loss_fn, has_aux=True)
-                
-                actor_loss_info, actor_grads = actor_grad_fn(
-                    params.actor_params,
-                    opt_states.actor_opt_state,
-                    traj_batch,
-                    advantages,
-                    entropy_key,
-                )
-                '''
-
-                def get_action_and_logits(params, obs):
-                    #print(params["params"]["action_head"]["Dense_0"]["kernel"].shape)
-                    #print(obs.agents_view.shape)
-                    output = apply_fn(params, obs)
-                    logits = output.distribution.logits
-                    action = output.sample(seed=key)
-                    return action, logits
-                #batched_get_action_and_logits = jax.pmap(jax.vmap(get_action_and_logits))
-
-                #output = apply_fn(params, obs)
-                #print(params["params"]["action_head"]["Dense_0"]["kernel"].shape)
-                #print(obs.agents_view.shape)
-
-                def loss_fn(params, obs, target):
-                    action, logits = get_action_and_logits(params, obs)
-                    return optax.softmax_cross_entropy(logits, target).mean()
-                
-                loss_info, grads = jax.value_and_grad(loss_fn)(params, obs, target)
-
+                loss_info, grads = jax.value_and_grad(loss_fn)(params, obs, target, key.astype(jnp.float32))
 
                 # Compute the parallel mean (pmean) over the batch.
                 # This calculation is inspired by the Anakin architecture demo notebook.
@@ -344,74 +302,13 @@ def get_learner_fn(
                 #print(params["params"]["action_head"]["Dense_0"]["kernel"].shape)
                 #print(updates["params"]["action_head"]["Dense_0"]["kernel"].shape)
                 new_params = optax.apply_updates(params, updates)
-                return (new_params, new_opt_state, entropy_key), loss_info
 
-            params, opt_state, obs, target, key = update_state
-            #key, shuffle_key, entropy_key = jax.random.split(key, 3)
-
-            # (don't) SHUFFLE MINIBATCHES
-            batch = (obs, target)
-            
-            '''
-            batch = jax.tree_util.tree_map(lambda x: merge_leading_dims(x, 2), batch)
-            minibatches = jax.tree_util.tree_map(
-                lambda x: jnp.reshape(x, [config.system.num_minibatches, -1] + list(x.shape[1:])),
-                batch,
-            )
-            '''
-            # UPDATE MINIBATCHES
-            key, entropy_key = jax.random.split(key)
-            #(params, opt_state, entropy_key), loss_info = jax.lax.scan(
-            #    _update_minibatch, (params, opt_state, entropy_key), batch #minibatches
-            #)
-            (params, opt_state, entropy_key), loss_info = _update_minibatch((params, opt_state, entropy_key), batch)
-            update_state = (params, opt_state, obs, target, key)
-            return update_state, loss_info
-        
-        update_state = (params, opt_state, obs, target, key)
-
-        # UPDATE EPOCHS
-        update_state, loss_info = jax.lax.scan(
-            _update_epoch, update_state, None, config.system.ppo_epochs
-        )
-
-        params, opt_state, obs, target, key = update_state
-        learner_state =(params, opt_state, key)
-        #metric = traj_batch.info #??
-        return (learner_state, batch), (loss_info)
-        #return learner_state, (metric, loss_info)
+                learner_state =(new_params, new_opt_state, key)
+                #metric = traj_batch.info #??
+                return (learner_state, loss_info)
     
-    def learner_fn(learner_state: Any, batch: Any) -> Tuple:
-            """Learner function.
-
-            This function represents the learner, it updates the network parameters
-            by iteratively applying the `_update_step` function for a fixed number of
-            updates. The `_update_step` function is vectorized over a batch of inputs.
-
-            Args:
-                learner_state (NamedTuple):
-                    - params (Params): The initial model parameters.
-                    - opt_states (OptStates): The initial optimizer state.
-                    - key (chex.PRNGKey): The random number generator state.
-                    - env_state (LogEnvState): The environment state.
-                    - timesteps (TimeStep): The initial timestep in the initial trajectory.
-            """
-
-            batched_update_step = jax.vmap(_update_step, in_axes=(0, 0), axis_name="batch")
-
-            def scanned_batched_update_step(carry, _):
-                return batched_update_step(carry[0], carry[1])
-   
-            (learner_state, batch), (loss_info) = jax.lax.scan(
-                scanned_batched_update_step, (learner_state, batch), None, config.system.num_updates_per_eval
-            )
-
-            print("yippee")
-            return (
-                learner_state,
-                #episode_metrics=episode_info,
-                loss_info,
-            )
+            #return jax.vmap(update, axis_name="batch")(key, params, obs, target)
+            return jax.vmap(update, in_axes=(0, 0), axis_name="batch")(learner_state, batch)
 
     return learner_fn
 
@@ -483,12 +380,15 @@ def run_experiment(_config: DictConfig) -> float:
         # Train.
         start_time = time.time()
         key, batch_key = jax.random.split(key)
+        
         batch_keys = jax.random.split(batch_key, len(jax.devices()))
         batch = jax.pmap(buffer.sample)(buffer_state, batch_keys)
-
         def inner(x):
-            return x[0]
+            return x[:, 0, ...]
+        def swap(x):
+            return jnp.swapaxes(x, 0, 1)
         batch = jax.tree_map(inner, batch)
+        #batch = jax.tree_map(swap, batch)
 
         params, opt_state, keys = learner_state
         learner_output = learn(learner_state, batch)
