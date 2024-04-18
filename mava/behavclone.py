@@ -114,6 +114,7 @@ def generate_exp(key, buffer, config, network, params, NUM_STEPS):
         output = network.apply(params, obs)
         logits = output.distribution.logits
         probs = jax.nn.softmax(logits)
+        jax.debug.print("probs: {x}", x=probs)
         action = output.sample(seed=key)
         return action, probs
 
@@ -265,8 +266,8 @@ def get_learner_fn(
             def loss_fn(params, obs, target, key):
                 action, logits = get_action_and_logits(params, obs, key.astype(jnp.uint32))
                 softlogits = jax.nn.softmax(logits)
-                jax.debug.print("{x}", x=softlogits)
-                jax.debug.print("{x}", x=target)
+                #jax.debug.print("{x}", x=softlogits)
+                #jax.debug.print("{x}", x=target)
                 loss = optax.softmax_cross_entropy(logits, target).mean()
                 return loss
             
@@ -416,7 +417,8 @@ def run_experiment(_config: DictConfig) -> float:
         # Prepare for evaluation.
         start_time = time.time()
         
-        trained_params = unreplicate_batch_dim(params)
+        #trained_params = unreplicate_batch_dim(params)
+        trained_params = teacher_params
         key_e, *eval_keys = jax.random.split(key_e, n_devices + 1)
         eval_keys = jnp.stack(eval_keys)
         eval_keys = eval_keys.reshape(n_devices, -1)
