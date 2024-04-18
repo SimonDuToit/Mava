@@ -131,10 +131,11 @@ def generate_exp(key, buffer, config, network, params, NUM_STEPS):
 
     # Generate D with teacher
     @jax.jit
-    def env_step(carry, _):
+    def env_step(carry):
         """Step the environment."""
         # SELECT ACTION
-        key, env_state, last_timestep, buffer_state = carry
+        i, key, env_state, last_timestep, buffer_state = carry
+        i = i + 1
         action, probs = batched_get_action_and_logits(params, last_timestep.observation)
 
         # STEP ENVIRONMENT
@@ -144,13 +145,14 @@ def generate_exp(key, buffer, config, network, params, NUM_STEPS):
             last_timestep.observation, probs
         )
         buffer_state = buffer.add(buffer_state, transition)
-        carry = key, env_state, timestep, buffer_state
-        return carry, _
+        carry = i, key, env_state, timestep, buffer_state
+        return carry
 
     
     def generate_exp(key, env_states, timesteps, buffer_state):   
-        step_init = key, env_states, timesteps, buffer_state
-        carry, _ = jax.lax.scan(env_step, step_init, None, NUM_STEPS)
+        step_init = 0, key, env_states, timesteps, buffer_state
+        #carry, _ = jax.lax.scan(env_step, step_init, None, NUM_STEPS)
+        carry = jax.lax.while_loop(lambda x: x[0] < NUM_STEPS, env_step, step_init)
         return carry
 
     carry = jax.pmap(generate_exp, in_axes = (None, 0, 0, 0))(key, env_states, timesteps, buffer_state)
