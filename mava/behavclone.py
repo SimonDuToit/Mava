@@ -264,7 +264,9 @@ def get_learner_fn(
 
             def loss_fn(params, obs, target, key):
                 action, logits = get_action_and_logits(params, obs, key.astype(jnp.uint32))
-                #logits = jax.nn.softmax(logits)
+                softlogits = jax.nn.softmax(logits)
+                jax.debug.print("{x}", x=softlogits)
+                jax.debug.print("{x}", x=target)
                 loss = optax.softmax_cross_entropy(logits, target).mean()
                 return loss
             
@@ -275,8 +277,8 @@ def get_learner_fn(
                 params, opt_state, key = learner_state
                 obs, target = batch.experience
                 #target = jax.nn.softmax(jnp.ones(target.shape))
-
                 loss_info, grads = jax.value_and_grad(loss_fn)(params, obs, target, key.astype(jnp.float32))
+            
 
                 # Compute the parallel mean (pmean) over the batch.
                 # This calculation is inspired by the Anakin architecture demo notebook.
