@@ -114,7 +114,7 @@ def generate_exp(key, buffer, config, network, params, NUM_STEPS):
         output = network.apply(params, obs)
         logits = output.distribution.logits
         probs = jax.nn.softmax(logits)
-        jax.debug.print("probs: {x}", x=probs)
+        #jax.debug.print("probs: {x}", x=probs)
         action = output.sample(seed=key)
         return action, probs
 
@@ -123,8 +123,8 @@ def generate_exp(key, buffer, config, network, params, NUM_STEPS):
     # Construct dataset
 
     def make_device_buffer_state(params, obs):
-        init_logits = batched_get_action_and_logits(params, obs)[1]
-        return buffer.init((obs, init_logits))
+        init_probs = batched_get_action_and_logits(params, obs)[1]
+        return buffer.init((obs, init_probs))
 
     #buffer_state = buffer.init((timesteps.observation, init_logits))
     buffer_state = jax.pmap(make_device_buffer_state, in_axes=(None, 0))(params, timesteps.observation)
@@ -143,7 +143,7 @@ def generate_exp(key, buffer, config, network, params, NUM_STEPS):
         transition = (
             last_timestep.observation, probs
         )
-        buffer.add(buffer_state, transition)
+        buffer_state = buffer.add(buffer_state, transition)
         carry = key, env_state, timestep, buffer_state
         return carry, _
 
@@ -417,8 +417,8 @@ def run_experiment(_config: DictConfig) -> float:
         # Prepare for evaluation.
         start_time = time.time()
         
-        #trained_params = unreplicate_batch_dim(params)
-        trained_params = teacher_params
+        trained_params = unreplicate_batch_dim(params)
+        #trained_params = teacher_params
         key_e, *eval_keys = jax.random.split(key_e, n_devices + 1)
         eval_keys = jnp.stack(eval_keys)
         eval_keys = eval_keys.reshape(n_devices, -1)
