@@ -150,7 +150,8 @@ def generate_exp(key, buffer, config, network, params, NUM_STEPS):
     
     def generate_exp(key, env_states, timesteps, buffer_state):   
         step_init = key, env_states, timesteps, buffer_state
-        return jax.lax.scan(env_step, step_init, None, NUM_STEPS)
+        carry, _ = jax.lax.scan(env_step, step_init, None, NUM_STEPS)
+        return carry
 
     carry = jax.pmap(generate_exp, in_axes = (None, 0, 0, 0))(key, env_states, timesteps, buffer_state)
     #jax.lax.while_loop(lambda x: x[0] < NUM_STEPS, env_step, step_init)
