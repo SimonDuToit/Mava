@@ -113,8 +113,9 @@ def generate_exp(key, buffer, config, network, params, NUM_STEPS):
     def get_action_and_logits(params, obs):
         output = network.apply(params, obs)
         logits = output.distribution.logits
+        probs = jax.nn.softmax(logits)
         action = output.sample(seed=key)
-        return action, logits
+        return action, probs
 
     batched_get_action_and_logits = jax.vmap(get_action_and_logits)
 
@@ -133,13 +134,13 @@ def generate_exp(key, buffer, config, network, params, NUM_STEPS):
         """Step the environment."""
         # SELECT ACTION
         key, env_state, last_timestep, buffer_state = carry
-        action, logits = batched_get_action_and_logits(params, last_timestep.observation)
+        action, probs = batched_get_action_and_logits(params, last_timestep.observation)
 
         # STEP ENVIRONMENT
         env_state, timestep = jax.vmap(jax.vmap(env.step))(env_state, action)
 
         transition = (
-            last_timestep.observation, logits
+            last_timestep.observation, probs
         )
         buffer.add(buffer_state, transition)
         carry = key, env_state, timestep, buffer_state
@@ -263,7 +264,9 @@ def get_learner_fn(
 
             def loss_fn(params, obs, target, key):
                 action, logits = get_action_and_logits(params, obs, key.astype(jnp.uint32))
-                return optax.softmax_cross_entropy(logits, target).mean()
+                #logits = jax.nn.softmax(logits)
+                loss = optax.softmax_cross_entropy(logits, target).mean()
+                return loss
             
 
             #def update(key, params, obs, target):
@@ -271,6 +274,7 @@ def get_learner_fn(
                     
                 params, opt_state, key = learner_state
                 obs, target = batch.experience
+                #target = jax.nn.softmax(jnp.ones(target.shape))
 
                 loss_info, grads = jax.value_and_grad(loss_fn)(params, obs, target, key.astype(jnp.float32))
 
@@ -371,7 +375,7 @@ def run_experiment(_config: DictConfig) -> float:
     max_episode_return = -jnp.inf
     best_params = None
     for eval_step in range(config.arch.num_evaluation):
-        for i in range(100):
+        for i in range(1):
             # Train.
             start_time = time.time()
             key, batch_key = jax.random.split(key)
@@ -385,12 +389,13 @@ def run_experiment(_config: DictConfig) -> float:
             batch = jax.tree_map(inner, batch)
             #batch = jax.tree_map(swap, batch)
 
-            params, opt_state, keys = learner_state
+            
             learner_output = learn(learner_state, batch)          
             
             learner_state, loss_info = learner_output
 
         jax.block_until_ready(learner_output)
+        params, opt_state, keys = learner_state
         # Log the results of the training.
         elapsed_time = time.time() - start_time
         t = int(steps_per_rollout * (eval_step + 1))
@@ -401,7 +406,10 @@ def run_experiment(_config: DictConfig) -> float:
         logger.log({"timestep": t}, t, eval_step, LogEvent.MISC)
         #if ep_completed:  # only log episode metrics if an episode was completed in the rollout.
         #    logger.log(episode_metrics, t, eval_step, LogEvent.ACT)
-        logger.log(learner_output[1], t, eval_step, LogEvent.TRAIN)
+        loss_info = {
+                    "total_loss": loss_info[0]
+                }
+        logger.log(loss_info, t, eval_step, LogEvent.TRAIN)
 
         # Prepare for evaluation.
         start_time = time.time()
@@ -438,7 +446,7 @@ def run_experiment(_config: DictConfig) -> float:
             max_episode_return = episode_return
 
         # Update runner state to continue training.
-        learner_state, loss_info = learner_output
+        #learner_state, loss_info = learner_output
 
     # Record the performance for the final evaluation run.
     eval_performance = float(jnp.mean(evaluator_output.episode_metrics[config.env.eval_metric]))
