@@ -150,10 +150,11 @@ def generate_exp(key, buffer, config, network, params, NUM_STEPS):
     
     def generate_exp(key, env_states, timesteps, buffer_state):   
         step_init = key, env_states, timesteps, buffer_state
-        jax.lax.scan(env_step, step_init, None, NUM_STEPS)
+        carry = jax.lax.scan(env_step, step_init, None, NUM_STEPS)
 
-    jax.pmap(generate_exp, in_axes = (None, 0, 0, 0))(key, env_states, timesteps, buffer_state)
+    carry = jax.pmap(generate_exp, in_axes = (None, 0, 0, 0))(key, env_states, timesteps, buffer_state)
     #jax.lax.while_loop(lambda x: x[0] < NUM_STEPS, env_step, step_init)
+    _, _, _, buffer_state = carry
     return buffer_state
 
 
@@ -266,8 +267,8 @@ def get_learner_fn(
             def loss_fn(params, obs, target, key):
                 action, logits = get_action_and_logits(params, obs, key.astype(jnp.uint32))
                 softlogits = jax.nn.softmax(logits)
-                #jax.debug.print("{x}", x=softlogits)
-                #jax.debug.print("{x}", x=target)
+                jax.debug.print("logits: {x}", x=softlogits)
+                jax.debug.print("target: {x}", x=target)
                 loss = optax.softmax_cross_entropy(logits, target).mean()
                 return loss
             
