@@ -81,6 +81,8 @@ def load_teacher(key, config):
     replicate_params = jax.tree_map(broadcast, teacher_params)
     #replicate_params = flax.jax_utils.replicate(replicate_params, devices=jax.devices())
 
+    print(replicate_params["params"]["action_head"]["Dense_0"]["kernel"].shape)
+
     # Instantiate the flat buffer, which is a Dataclass of pure functions.
     
 
