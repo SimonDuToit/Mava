@@ -123,8 +123,6 @@ def generate_exp(key, buffer, config, teacher_network, teacher_params, actor_net
     # Construct dataset
 
     def make_device_buffer_state(params, obs):
-        print(params["params"]["action_head"]["Dense_0"]["kernel"].shape)
-        print(obs.agents_view.shape)
         init_probs = batched_get_action_and_logits(params, params, obs)[1]
         def in_batch(x):
             return x[0][0]
