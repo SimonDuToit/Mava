@@ -86,8 +86,7 @@ def load_teacher(key, config):
 
     return actor_network, replicate_params
 
-def generate_exp(key, buffer, config, teacher_network, teacher_params, actor_network, actor_params, NUM_STEPS):
-
+def init_buffer_state(key, buffer, config, teacher_network, actor_network, teacher_params):
     env, eval_env = environments.make(config)
     n_devices = len(jax.devices())
 
@@ -108,6 +107,14 @@ def generate_exp(key, buffer, config, teacher_network, teacher_params, actor_net
     env_states = jax.tree_map(reshape_states, env_states)
     timesteps = jax.tree_map(reshape_states, timesteps)
 
+    def get_action_and_logits(teacher_params, actor_params, obs):
+        output = teacher_network.apply(teacher_params, obs)
+        logits = output.distribution.logits
+        probs = jax.nn.softmax(logits)
+        #jax.debug.print("probs: {x}", x=probs)
+        action = actor_network.apply(actor_params, obs).sample(seed=key)
+        return action, probs
+    
     # Define policy function
 
     def get_action_and_logits(teacher_params, actor_params, obs):
@@ -132,6 +139,40 @@ def generate_exp(key, buffer, config, teacher_network, teacher_params, actor_net
 
     #buffer_state = buffer.init((timesteps.observation, init_logits))
     buffer_state = jax.pmap(make_device_buffer_state, in_axes=(None, 0))(teacher_params, timesteps.observation)
+
+    return buffer_state
+
+def generate_exp(key, buffer, buffer_state, config, teacher_network, teacher_params, actor_network, actor_params, NUM_STEPS):
+
+    env, eval_env = environments.make(config)
+    n_devices = len(jax.devices())
+
+    key, env_key = jax.random.split(key)
+    # Initialise environment states and timesteps: across devices and batches.
+    key, *env_keys = jax.random.split(
+        env_key, n_devices * config.system.update_batch_size * config.arch.num_envs + 1
+        #key, n_devices * config.system.update_batch_size + 1
+    )
+    env_states, timesteps = jax.vmap(env.reset, in_axes=(0))(
+        jnp.stack(env_keys),
+    )
+    reshape_states = lambda x: x.reshape(
+        (n_devices, config.system.update_batch_size, config.arch.num_envs) + x.shape[1:]
+        #(n_devices, config.system.update_batch_size) + x.shape[1:]
+    )
+    # (devices, update batch size, num_envs, ...)
+    env_states = jax.tree_map(reshape_states, env_states)
+    timesteps = jax.tree_map(reshape_states, timesteps)
+
+    def get_action_and_logits(teacher_params, actor_params, obs):
+        output = teacher_network.apply(teacher_params, obs)
+        logits = output.distribution.logits
+        probs = jax.nn.softmax(logits)
+        #jax.debug.print("probs: {x}", x=probs)
+        action = actor_network.apply(actor_params, obs).sample(seed=key)
+        return action, probs
+
+    batched_get_action_and_logits = jax.vmap(get_action_and_logits)
 
     # Generate D with teacher
     @jax.jit
@@ -171,7 +212,6 @@ def generate_exp(key, buffer, config, teacher_network, teacher_params, actor_net
         return carry
 
     carry = jax.pmap(generate_exp, in_axes = (None, 0, 0, 0))(key, env_states, timesteps, buffer_state)
-    #jax.lax.while_loop(lambda x: x[0] < NUM_STEPS, env_step, step_init)
     _, _, _, _, buffer_state = carry
     return buffer_state
 
@@ -219,7 +259,7 @@ def learner_setup(
 
     # Get batched iterated update and replicate it to pmap it over cores.
     learn = get_learner_fn(env, apply_fn, update_fn, config)
-    learn = jax.pmap(learn, in_axes=(0, 0), axis_name="device")
+    learn = jax.pmap(learn, in_axes=(None, 0), axis_name="device")
 
     '''
     # Load model from checkpoint if specified.
@@ -242,7 +282,7 @@ def learner_setup(
     replicate_learner = jax.tree_map(broadcast, replicate_learner)
 
     # Duplicate learner across devices.
-    replicate_learner = flax.jax_utils.replicate(replicate_learner, devices=jax.devices())
+    #replicate_learner = flax.jax_utils.replicate(replicate_learner, devices=jax.devices())
 
     # Initialise learner state.
     params, opt_state, step_keys = replicate_learner
@@ -320,7 +360,7 @@ def get_learner_fn(
 
                 learner_state =(new_params, new_opt_state, key)
                 #metric = traj_batch.info #??
-                return (learner_state, loss_info)
+                return learner_state, loss_info
     
             #return jax.vmap(update, axis_name="batch")(key, params, obs, target)
             return jax.vmap(update, in_axes=(0, 0), axis_name="batch")(learner_state, batch)
@@ -338,25 +378,26 @@ def run_experiment(_config: DictConfig) -> float:
     teacher_network, teacher_params = load_teacher(key, config)
     BUFF_SIZE = 1000
     buffer = fbx.make_item_buffer(BUFF_SIZE, 1, config.system.update_batch_size * config.arch.num_envs, False, False)
-    buffer_state = generate_exp(key, buffer, config, teacher_network, teacher_params, teacher_network, teacher_params, BUFF_SIZE)
-
+    buffer_state = init_buffer_state(key, buffer, config, teacher_network, teacher_network, teacher_params)
+    buffer_state = generate_exp(key, buffer, buffer_state, config, teacher_network, teacher_params, teacher_network, teacher_params, BUFF_SIZE)
+    
     # Create the enviroments for train and eval.
     env, eval_env = environments.make(config)
 
     # PRNG keys.
-    key, key_e, actor_net_key = jax.random.split(
+    key, key_e, learner_net_key = jax.random.split(
         jax.random.PRNGKey(config.system.seed), num=3
     )
 
     # Setup learner.
-    learn, actor_network, learner_state = learner_setup(
-        env, (key, actor_net_key), config
+    learn, learner_network, learner_state = learner_setup(
+        env, (key, learner_net_key), config
     )
 
     # Setup evaluator.
     # One key per device for evaluation.
     eval_keys = jax.random.split(key_e, n_devices)
-    evaluator, absolute_metric_evaluator = make_eval_fns(eval_env, actor_network, config)
+    evaluator, absolute_metric_evaluator = make_eval_fns(eval_env, learner_network, config)
 
     # Calculate total timesteps.
     config = check_total_timesteps(config)
@@ -403,7 +444,7 @@ def run_experiment(_config: DictConfig) -> float:
             batch_keys = jax.random.split(batch_key, len(jax.devices()))
             batch = jax.pmap(buffer.sample)(buffer_state, batch_keys)
             def inner(x):
-                return x[:, 0, ...]
+                return x[0, ...]
             def swap(x):
                 return jnp.swapaxes(x, 0, 1)
             def unflatten_batch(x):
@@ -413,9 +454,16 @@ def run_experiment(_config: DictConfig) -> float:
             #batch = jax.tree_map(swap, batch)
             batch = jax.tree_map(unflatten_batch, batch)
 
-            learner_output = learn(learner_state, batch)          
-            
+            learner_output = learn(learner_state, batch)     
+
             learner_state, loss_info = learner_output
+            learner_state = jax.tree_map(inner, learner_state)
+            
+
+            #unreplicated_params = unreplicate_n_dims(learner_params, 1)
+        learner_params = learner_state[0]
+        buffer_state = generate_exp(key, buffer, buffer_state, config, teacher_network, teacher_params, learner_network, learner_params, BUFF_SIZE / 100)
+
 
         jax.block_until_ready(learner_output)
         params, opt_state, keys = learner_state
@@ -437,13 +485,15 @@ def run_experiment(_config: DictConfig) -> float:
         # Prepare for evaluation.
         start_time = time.time()
         
-        trained_params = unreplicate_batch_dim(params)
+        replicate_params = flax.jax_utils.replicate(params, devices=jax.devices())
+        trained_params = unreplicate_batch_dim(replicate_params)
         #trained_params = teacher_params
         key_e, *eval_keys = jax.random.split(key_e, n_devices + 1)
         eval_keys = jnp.stack(eval_keys)
         eval_keys = eval_keys.reshape(n_devices, -1)
 
         # Evaluate.
+        
         evaluator_output = evaluator(trained_params, eval_keys)
         jax.block_until_ready(evaluator_output)
 
